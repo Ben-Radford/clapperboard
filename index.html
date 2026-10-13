@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<script src="config.js"></script>
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+<title>Marine Survey Clapper Board</title>
+<style>
+:root{--bg:#000;--fg:#fff;--mut:#9fb3c8;--acc:#2f9e44;--warn:#f08c00;--bad:#e03131;--card:#111b27;--line:#26384d}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+body{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+.screen{display:none;min-height:100%;padding:16px}.screen.on{display:flex;flex-direction:column}
+h1{font-size:20px;margin:0 0 12px}
+label{display:block;font-weight:700;margin:14px 0 6px}
+input[type=text]{width:100%;font-size:28px;padding:14px;border-radius:10px;border:2px solid var(--line);background:var(--card);color:var(--fg)}
+button{font:inherit;font-weight:700;border:0;border-radius:12px;padding:16px 18px;color:#fff;background:#1c7ed6;font-size:18px}
+button.go{background:var(--acc)}button.sec{background:#364a60}button.bad{background:var(--bad)}button:disabled{opacity:.4}
+.row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}.row>*{flex:1}
+.gps{margin-top:14px;padding:12px;border-radius:10px;background:var(--card);border:1px solid var(--line);font-size:15px;color:var(--mut)}
+.gps b{color:var(--fg)}.ok{color:#69db7c}.wn{color:var(--warn)}.er{color:#ff8787}
+/* the board: fills the screen, text scales with the viewport so it works on phone and tablet */
+#board{flex:1;display:flex;flex-direction:column;justify-content:center;gap:1.2vmin;padding:2vmin 3vmin}
+.ln{display:flex;align-items:baseline;gap:3vmin;line-height:1.05;white-space:nowrap}
+.ln span:first-child{font-size:clamp(18px,5.2vmin,64px);color:var(--mut);font-weight:700;min-width:5.2em}
+.ln span:last-child{font-size:clamp(26px,8.4vmin,130px);font-weight:800;letter-spacing:.01em;font-variant-numeric:tabular-nums}
+#bar{display:flex;gap:10px;padding:10px 0 0}#bar>*{flex:1}
+.small{font-size:13px;color:var(--mut)}
+table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:8px 6px;border-bottom:1px solid var(--line);text-align:left}
+#tip{margin-top:auto;padding-top:20px}
+</style></head><body>
+
+<!-- 1. NEW RECORD -->
+<section class="screen on" id="s-new">
+  <h1>Marine Survey Clapper Board</h1>
+  <label for="site">Site name</label>
+  <input id="site" type="text" autocomplete="off" autocapitalize="characters" enterkeyhint="done" placeholder="e.g. ONS-T07">
+  <div class="gps" id="gps">Waiting for GPS… keep Location on (Precise).</div>
+  <div class="gps" id="syncst" style="margin-top:8px"></div>
+  <div class="row"><button class="go" id="show" disabled>Show board</button></div>
+  <div class="row"><button class="sec" id="to-log">Deployment log (<span id="n">0</span>)</button></div>
+  <p class="small" id="tip">Date, time and position are stamped the moment you tap <b>Show board</b>, then held fixed — same as the Survey123 form. Start a new record for each deployment.</p>
+</section>
+
+<!-- 2. BOARD -->
+<section class="screen" id="s-board">
+  <div id="board">
+    <div class="ln"><span>Site</span><span id="b-site"></span></div>
+    <div class="ln"><span>Date</span><span id="b-date"></span></div>
+    <div class="ln"><span>Time</span><span id="b-time"></span></div>
+    <div class="ln"><span>Lat</span><span id="b-lat"></span></div>
+    <div class="ln"><span>Lon</span><span id="b-lon"></span></div>
+  </div>
+  <div class="small" id="b-acc" style="text-align:center"></div>
+  <div id="bar">
+    <button class="sec" id="photo">Deployment photo</button>
+    <button class="go" id="save">Save record ✓</button>
+    <button class="bad" id="discard">Discard</button>
+  </div>
+  <input id="cam" type="file" accept="image/*" capture="environment" hidden>
+</section>
+
+<!-- 3. LOG -->
+<section class="screen" id="s-log">
+  <h1>Deployment log</h1>
+  <div class="row" style="margin-top:0">
+    <button class="sec" id="back">← Back</button>
+    <button id="csv">Export CSV</button>
+    <button id="gj">Export GeoJSON</button>
+  </div>
+  <div class="gps" id="syncst2" style="margin-top:12px"></div>
+  <div class="row"><button class="go" id="syncnow">Sync now</button></div>
+  <div style="overflow:auto;margin-top:12px"><table id="tbl"></table></div>
+  <details style="margin-top:14px"><summary class="small">Sync settings (Google Sheet)</summary>
+    <label for="url">Web app URL (ends in /exec)</label><input id="url" type="text" autocapitalize="off" autocorrect="off" style="font-size:16px">
+    <label for="tok">Shared token</label><input id="tok" type="text" autocapitalize="off" autocorrect="off" style="font-size:16px">
+    <div class="row"><button class="sec" id="savecfg">Save settings</button></div>
+  </details>
+  <p class="small">Records are kept on this device and sent to the Google Sheet whenever there is signal. Unsent records stay in the outbox — don't clear site data until it shows all sent. CSV export is the backup.</p>
+</section>
+
+<script>
+const $=id=>document.getElementById(id);
+const KEY='clapper.records.v1';
+const load=()=>{try{return JSON.parse(localStorage.getItem(KEY)||'[]')}catch(e){return[]}};
+const store=r=>localStorage.setItem(KEY,JSON.stringify(r));
+let fix=null, watchId=null, cur=null;
+
+function show(id){document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('on',s.id===id))}
+function pad(n){return String(n).padStart(2,'0')}
+const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const fmtDate=d=>`${pad(d.getDate())} ${MON[d.getMonth()]} ${d.getFullYear()}`;
+const fmtTime=d=>`${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+function tzStr(d){const o=-d.getTimezoneOffset(),s=o>=0?'+':'-',a=Math.abs(o);return s+pad(Math.floor(a/60))+':'+pad(a%60)}
+function isoLocal(d){return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${fmtTime(d)}${tzStr(d)}`}
+
+/* ---- GPS: watch continuously so a fresh fix is ready the instant you tap ---- */
+function gpsMsg(html){$('gps').innerHTML=html;upd()}
+function startGPS(){
+  if(watchId!==null){navigator.geolocation.clearWatch(watchId);watchId=null}
+  const proto=location.protocol;
+  if(proto==='file:'||!window.isSecureContext){
+    gpsMsg('<span class="er"><b>GPS is blocked: this page was opened from a downloaded file / preview.</b></span><br>'+
+      'Open the app from its <b>https://</b> web address in Safari (Chrome on Android), then Add to Home Screen. See SETUP.md, step 2.');
+    return}
+  if(!('geolocation' in navigator)){gpsMsg('<span class="er">No geolocation on this device/browser.</span>');return}
+  gpsMsg('Waiting for GPS… keep Location on (Precise).');
+  watchId=navigator.geolocation.watchPosition(p=>{
+    fix={lat:p.coords.latitude,lon:p.coords.longitude,acc:p.coords.accuracy,ts:p.timestamp};
+    paintGPS();
+  },e=>{
+    fix=null;
+    const how=e.code===1
+      ? 'Location is blocked for this page. <b>iPhone/iPad:</b> Settings &gt; Privacy &amp; Security &gt; Location Services = On, then Safari Websites (or this app) = While Using + Precise Location. Then tap Retry.'
+      : e.code===3 ? 'No fix yet (timed out). Move to a clear view of the sky, check Location Services is on, then tap Retry.'
+      : 'Position unavailable. Check Location Services is on, then tap Retry.';
+    gpsMsg('<span class="er">GPS: '+how+'</span> <button class="sec" id="retry" style="padding:8px 12px;font-size:15px;margin-top:8px">Retry GPS</button>');
+    $('retry').onclick=startGPS;
+  },{enableHighAccuracy:true,maximumAge:0,timeout:30000});
+}
+function paintGPS(){
+  if(!fix)return;
+  const age=Math.round((Date.now()-fix.ts)/1000), cls=fix.acc<=10?'ok':fix.acc<=30?'wn':'er';
+  $('gps').innerHTML=`GPS fix: <b>${fix.lat.toFixed(6)}, ${fix.lon.toFixed(6)}</b> · <span class="${cls}">±${Math.round(fix.acc)} m</span> · ${age}s old`;
+  upd();
+}
+setInterval(paintGPS,1000);
+function upd(){$('show').disabled=!($('site').value.trim()&&fix)}
+$('site').addEventListener('input',upd);
+
+/* ---- Stamp once (equivalent of once() in the XLSForm) ---- */
+$('show').onclick=()=>{
+  const now=new Date(), site=$('site').value.trim();
+  if(!site||!fix)return;
+  cur={id:crypto.randomUUID?crypto.randomUUID():String(Date.now()),site,
+       datetime:isoLocal(now),date_display:fmtDate(now),time_display:fmtTime(now),
+       latitude:+fix.lat.toFixed(6),longitude:+fix.lon.toFixed(6),gps_accuracy_m:Math.round(fix.acc*10)/10,
+       photo_taken:false,photo_datetime:'',photo_latitude:'',photo_longitude:'',photo_accuracy_m:'',
+       device:navigator.userAgent.slice(0,80)};
+  $('b-site').textContent=cur.site;$('b-date').textContent=cur.date_display;$('b-time').textContent=cur.time_display;
+  $('b-lat').textContent=cur.latitude.toFixed(6);$('b-lon').textContent=cur.longitude.toFixed(6);
+  $('b-acc').textContent=`GPS ±${cur.gps_accuracy_m} m`;
+  $('photo').textContent='Deployment photo';
+  show('s-board');
+  try{navigator.wakeLock&&navigator.wakeLock.request('screen').catch(()=>{})}catch(e){}
+};
+
+/* ---- Deployment photo: second, independent position fix taken at the photo moment ---- */
+$('photo').onclick=()=>$('cam').click();
+$('cam').onchange=()=>{
+  if(!$('cam').files.length||!cur)return;
+  const t=new Date(), f=fix;
+  cur.photo_taken=true;cur.photo_datetime=isoLocal(t);
+  if(f){cur.photo_latitude=+f.lat.toFixed(6);cur.photo_longitude=+f.lon.toFixed(6);cur.photo_accuracy_m=Math.round(f.acc*10)/10}
+  $('photo').textContent='Photo ✓ (retake)';$('cam').value='';
+};
+
+$('save').onclick=()=>{const r=load();cur._synced=false;r.push(cur);store(r);cur=null;$('site').value='';upd();refresh();show('s-new');sync()};
+$('discard').onclick=()=>{if(confirm('Discard this record?')){cur=null;show('s-new')}};
+
+/* ---- Log + export ---- */
+function refresh(){const r=load();$('n').textContent=r.length;paintSync()}
+$('to-log').onclick=()=>{drawLog();show('s-log')};
+$('back').onclick=()=>show('s-new');
+function drawLog(){
+  const r=load().slice().reverse();
+  $('tbl').innerHTML='<tr><th>Site</th><th>Date</th><th>Time</th><th>Lat</th><th>Lon</th><th>Photo</th><th>Sent</th></tr>'+
+    (r.length?r.map(x=>`<tr><td>${esc(x.site)}</td><td>${x.date_display}</td><td>${x.time_display}</td><td>${x.latitude}</td><td>${x.longitude}</td><td>${x.photo_taken?'✓':''}</td><td>${x._synced===true?'✓':x._synced?'✓?':'…'}</td></tr>`).join(''):'<tr><td colspan=7>No records yet</td></tr>');
+}
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function dl(name,mime,text){
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:mime}));a.download=name;
+  document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000)
+}
+const COLS=['id','site','datetime','date_display','time_display','latitude','longitude','gps_accuracy_m','photo_taken','photo_datetime','photo_latitude','photo_longitude','photo_accuracy_m','device'];
+const q=v=>{v=String(v??'');return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v};
+const stamp=()=>new Date().toISOString().slice(0,10);
+$('csv').onclick=()=>{const r=load();dl(`clapperboard_${stamp()}.csv`,'text/csv',[COLS.join(',')].concat(r.map(x=>COLS.map(c=>q(x[c])).join(','))).join('\n'))};
+$('gj').onclick=()=>{const r=load();dl(`clapperboard_${stamp()}.geojson`,'application/geo+json',JSON.stringify({type:'FeatureCollection',features:r.map(x=>({type:'Feature',geometry:{type:'Point',coordinates:[x.longitude,x.latitude]},properties:x}))},null,1))};
+
+
+/* ---- Google Sheets sync (outbox) ---- */
+const CFGKEY='clapper.sync.v1';
+function cfg(){let c={};try{c=JSON.parse(localStorage.getItem(CFGKEY)||'{}')}catch(e){}
+  const d=window.CLAPPER_CONFIG||{};return{url:c.url||d.url||'',token:c.token||d.token||''}}
+// one-tap setup link:  index.html?url=<exec url>&token=<token>
+(function(){const q=new URLSearchParams(location.search);if(q.get('url')){
+  localStorage.setItem(CFGKEY,JSON.stringify({url:q.get('url'),token:q.get('token')||''}));
+  history.replaceState(null,'',location.pathname)}})();
+let syncing=false,lastErr='';
+const unsent=()=>load().filter(r=>!r._synced);
+const unconf=()=>load().filter(r=>r._synced==='unconfirmed').length;
+function paintSync(){
+  const c=cfg(),n=unsent().length;let t,cls='';
+  if(!c.url){t='Sync: not set up (records kept on device)';cls='wn'}
+  else if(syncing){t='Sync: sending…'}
+  else if(n===0){const u=unconf();t=u?`Sync: all sent, ${u} not confirmed — check the Sheet`:'Sync: all records sent ✓';cls=u?'wn':'ok'}
+  else if(!navigator.onLine){t=`Sync: ${n} unsent — offline, will send when signal returns`;cls='wn'}
+  else if(lastErr){t=`Sync: ${n} unsent — ${lastErr}`;cls='er'}
+  else{t=`Sync: ${n} unsent`;cls='wn'}
+  for(const id of ['syncst','syncst2'])$(id).innerHTML=`<span class="${cls}">${t}</span>`;
+}
+async function sync(){
+  const c=cfg();if(!c.url||syncing||!navigator.onLine){paintSync();return}
+  const batch=unsent();if(!batch.length){paintSync();return}
+  syncing=true;lastErr='';paintSync();
+  const body=JSON.stringify({token:c.token,records:batch.map(({_synced,...r})=>r)});
+  const mark=(ids,v)=>{const ok=new Set(ids),all=load();all.forEach(r=>{if(ok.has(r.id))r._synced=v});store(all)};
+  try{
+    // text/plain keeps this a "simple" cross-origin request (no preflight), which Apps Script requires
+    let j;
+    try{const res=await fetch(c.url,{method:'POST',body,redirect:'follow'});j=await res.json();}
+    catch(e1){
+      if(e1 instanceof SyntaxError)throw new Error('server error — will retry');               // server answered, but not with our JSON
+      // Reply unreadable (CORS on the redirect). Re-send fire-and-forget: it is idempotent (de-duplicated by id).
+      // This rejects only if the request could not be delivered at all.
+      await fetch(c.url,{method:'POST',body,mode:'no-cors',redirect:'follow'});
+      mark(batch.map(r=>r.id),'unconfirmed');throw new Error('sent, but reply unreadable — check the Sheet');
+    }
+    if(!j.ok)throw new Error(j.error||'rejected');
+    mark(j.ids,true);
+  }catch(e){lastErr=(e&&e.message)||'failed';}
+  syncing=false;refresh();if($('s-log').classList.contains('on'))drawLog();
+}
+$('syncnow').onclick=sync;
+$('savecfg').onclick=()=>{localStorage.setItem(CFGKEY,JSON.stringify({url:$('url').value.trim(),token:$('tok').value.trim()}));lastErr='';sync()};
+addEventListener('online',sync);addEventListener('offline',paintSync);
+setInterval(()=>{if(unsent().length)sync()},60000);
+
+{const c=cfg();$('url').value=c.url;$('tok').value=c.token}
+refresh();startGPS();sync();
+if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+</script></body></html>
